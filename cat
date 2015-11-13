@@ -1,0 +1,137 @@
+#!/usr/bin/python3
+# Author: Joshua Chen
+# Date: 2015-02-02
+# Finished on: 2015-03-18
+# Location: Shenzhen
+# Description: mimic the cat tool
+
+import os, sys
+
+def cat(src, dst, args):
+    if src.isatty():
+        read_data = lambda: src.readline()
+    else:
+        read_data = lambda: src.read(args.buffer_size)
+
+    while True:
+        buf = read_data()
+        if not buf: break
+        buf = transform(buf, args)
+        dst.write(buf)
+        dst.flush()
+
+def transform(buf, args):
+    # squeeze empty lines
+    if args.squeeze_blank:
+        buf = squeeze(buf)
+
+    # numbering: 'number_nonblank' overwrites 'number'
+    if args.number_nonblank:
+        buf = number(buf, ignoreblank=True)
+    elif args.number:
+        buf = number(buf)
+
+    # show end-of-line mark
+    if args.show_ends:
+        buf = buf.replace(b'\n', b'$\n')
+
+    # show TAB mark
+    if args.show_tabs:
+        buf = buf.replace(b'\t', b'^I')
+
+    return buf
+
+def squeeze(input):
+    import re
+    return re.sub(b'\n\n\n+', b'\n\n', input)
+
+def number(input, ignoreblank=False):
+    # preserve the ending new-line character
+    if input[-1] == ord('\n'):
+        end = b'\n'
+        input = input[:-1]
+    else:
+        end = b''
+    lines = input.split(b'\n')
+    res = []
+    if ignoreblank:
+        for x in lines:
+            if x:
+                pad = ('%6d\t' % args.line_number).encode()
+                args.line_number += 1
+                res.append(pad + x)
+            else:
+                res.append(b'')
+    else:
+        for x in lines:
+            res.append(('%6d\t' % args.line_number).encode() + x)
+            args.line_number += 1
+    return b'\n'.join(res) + end
+
+def parse_args():
+    from argparse import ArgumentParser
+    basename = os.path.basename(sys.argv[0])
+    usage = basename + ' [OPTION]... [FILE]...'
+    usage += '\nConcatenate FILE(s), or standard input, to standard output. '
+    usage += '\nThis is a Python implementation'
+    epilog = ' With no FILE, or when FILE is -, read standard input.'
+    parser = ArgumentParser(usage=usage, epilog=epilog)
+    parser.add_argument('-A', '--show-all', help='equivalent to -vET', action='store_true')
+    parser.add_argument('-b', '--number-nonblank', help='number nonempty output lines', action='store_true')
+    parser.add_argument('-e', help='equivalent to -vE', action='store_true')
+    parser.add_argument('-E', '--show-ends', help='display $ at end of each line', action='store_true')
+    parser.add_argument('-n', '--number', help='number all output lines', action='store_true')
+    parser.add_argument('-s', '--squeeze-blank', help='suppress repeated empty output lines', action='store_true')
+    parser.add_argument('-t', help='equivalent to -vT', action='store_true')
+    parser.add_argument('-T', '--show-tabs', help='display TAB characters as ^I', action='store_true')
+    parser.add_argument('-u', help='(ignored)', action='store_true')
+    parser.add_argument('-v', help='(ignored)', action='store_true')
+    parser.add_argument('--version', help='output version information and exit', action='store_true')
+    parser.add_argument('FILE', help='file(s) to concatenate', nargs='*')
+    return parser.parse_args()
+
+def show_version():
+    msg='''
+cat (Python implementation of GNU cat of coreutils) 0.1
+Copyright (C) 2015 Joshua Chen.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Joshua Chen.
+'''
+    print(msg.strip())
+
+args = parse_args()
+if args.version:
+    show_version()
+    exit(0)
+
+# adjust arguments
+if args.e: args.show_ends = args.e
+if args.t: args.show_tabs = args.t
+if args.show_all:
+    args.show_ends = True
+    args.show_tabs = True
+args.buffer_size = 16384
+args.line_number = 1
+
+dst = os.fdopen(sys.stdout.fileno(), 'wb')
+
+# read from stdin when no file specified
+if not args.FILE:
+    args.FILE.append('-')
+
+for file in args.FILE:
+    if file == '-':
+        src = os.fdopen(sys.stdin.fileno(), 'rb')
+    else:
+        src = open(file, 'rb')
+
+    try:
+        cat(src, dst, args)
+    except KeyboardInterrupt:
+        print()
+        exit()
+    finally:
+        src.close()

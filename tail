@@ -1,0 +1,165 @@
+#!/usr/bin/python3
+# Author: Joshua Chen
+# Date: 2015-03-20
+# Finished: 2015-03-20
+# Location: Shenzhen
+# Description: mimic the tail tool
+
+import os, sys
+
+prog_path = os.path.realpath(__file__)
+prog_dir  = os.path.dirname(prog_path)
+sys.path.insert(0, os.path.join(prog_dir, 'lib'))
+
+from textproc.buffer import FifoBuffer
+from system.fileutils import read_data, write_out
+from numberutils import convertHumanNumber
+
+def tail(src, dst, args):
+    bs = args.buffer_size
+    # ignore the starting N-1 lines/bytes
+    if args.ignore:
+        number = args.number - 1
+        if number < 0: number = 0
+        while number:
+            data = read_data(src, args.line_mode, bs)
+            if not data: break
+            if number < len(data):
+                data = data[number:]
+                write_out(dst, data, args.line_mode)
+                break
+            else:
+                number -= len(data)
+        while True:
+            data = read_data(src, args.line_mode, bs)
+            if not data: break
+            write_out(dst, data, args.line_mode)
+    # print the last N lines/bytes
+    else:
+        number = args.number
+        creator = list if args.line_mode else bytearray
+        buffer = FifoBuffer(number, creator)
+        while True:
+            data = read_data(src, args.line_mode, bs)
+            if not data: break
+            buffer.filter(data)
+        write_out(dst, buffer.get_buffer(), args.line_mode)
+
+def parse_args():
+    from argparse import ArgumentParser, Action, RawDescriptionHelpFormatter
+
+    class Mix(Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            if option_string == '-n':
+                namespace.line_mode = True
+            elif option_string == '-c':
+                namespace.line_mode = False
+            if values[0] == '+':
+                namespace.ignore = True
+            else:
+                namespace.ignore = False
+            try:
+                namespace.number = abs(int(convertHumanNumber(values)))
+            except (ValueError, KeyError):
+                print('invalid argument: %s' % values)
+                exit(1)
+
+    basename = os.path.basename(sys.argv[0])
+    usage = basename + ' [OPTION]... [FILE]...'
+    description = '\nPrint the last 10 lines of each FILE to standard output.'
+    description += '\nWith more than one FILE, precede each with a header giving the file name.'
+    description += '\nWith no FILE, or when FILE is -, read standard input.'
+    epilog = '''If the first character of K (the number of bytes or lines) is a `+', print beginning with the Kth item from the start of each file, otherwise, print the last K items in the file.  K may have a multiplier suffix: b 512, kB 1000, K 1024, MB 1000*1000, M 1024*1024, GB 1000*1000*1000, G 1024*1024*1024, and so on for T, P, E, Z, Y.\n\n'''
+    epilog += '''With --follow (-f), tail defaults to following the file descriptor, which means that even if a tail'ed file is renamed, tail will continue to track its end.  This default behavior is not desirable when you really want to track the actual name of the file, not the file descriptor (e.g., log rotation).  Use --follow=name in that case.  That causes tail to track the named file in a way that accommodates renaming, removal and creation.'''
+
+    parser = ArgumentParser(
+                description=description,
+                usage=usage,
+                epilog=epilog,
+                formatter_class=RawDescriptionHelpFormatter
+             )
+    parser.add_argument('-c', '--bytes', help='''output the last K bytes; alternatively, use -c +K to output bytes starting with the Kth of each file''', metavar='K', action=Mix)
+    parser.add_argument('-n', '--lines', help='''output the last K lines, instead of the last 10; or use -n +K to output lines starting with the Kth''', metavar='K', action=Mix)
+    parser.add_argument('-f', '--follow', help='output appended data as the file grows', action='store_true')
+    parser.add_argument('-q', '--quiet', '--silent', dest='verbose', help='never print headers giving file names', action='store_false', default=False)
+    parser.add_argument('-v', '--verbose', dest='verbose', help='always print headers giving file names', action='store_true', default=False)
+    parser.add_argument('--version', help='output version information and exit', action='store_true')
+    parser.add_argument('FILE', help='file(s) to concatenate', nargs='*')
+    return parser.parse_args()
+
+def show_version():
+    msg='''
+tail (Python implementation of GNU tail of coreutils) 0.1
+Copyright (C) 2015 Joshua Chen.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Joshua Chen.
+'''
+    print(msg.strip())
+
+def open_file(file, args):
+    if file == '-':
+        f = os.fdopen(sys.stdin.fileno(), 'rb')
+    else:
+        f = open(file, 'rb')
+    if f.isatty():
+        args.buffer_size = 1
+    else:
+        args.buffer_size = args._buffer_size
+    return f
+
+def write_header(dst, file):
+    dst.write(('==> %s <==\n' % file).encode())
+
+def follow(src, dst, args):
+    for line in src:
+        if args.verbose:
+            dst.write(b'\n')
+            write_header(dst, src.name)
+        dst.write(line)
+    dst.flush()
+
+# argument parsing
+args = parse_args()
+if not 'line_mode' in args.__dict__:
+    args.line_mode = True   # default is line mode
+    args.number = 10        # print the first 10 lines
+if not 'ignore' in args.__dict__:
+    args.ignore = False
+args._buffer_size = 1048576
+
+if args.version:
+    show_version()
+    exit(0)
+
+dst = os.fdopen(sys.stdout.fileno(), 'wb')
+
+# read from stdin when no file specified
+if not args.FILE:
+    args.FILE.append('-')
+
+file_objects = [open_file(x, args) for x in args.FILE]
+for src, n in zip(file_objects, range(len(file_objects))):
+    # write the header
+    if args.verbose:
+        if n: dst.write(b'\n')
+        write_header(dst, src.name)
+
+    try:
+        tail(src, dst, args)
+    except KeyboardInterrupt:
+        print()
+        exit()
+
+if args.follow:
+    from time import sleep
+    try:
+        while True:
+            for src in file_objects:
+                follow(src, dst, args)
+            sleep(1)
+    except KeyboardInterrupt:
+        print()
+        exit()

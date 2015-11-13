@@ -1,0 +1,32 @@
+Requirements:
+
+    1. Python3
+    2. wcwidth
+
+
+Procedure:
+
+    1. install the dependency
+
+        $ pip3 install wcwidth
+
+
+    2. copy the whole directory somewhere you like
+
+        $ cp -rv coreutils $HOME/coreutils
+
+
+    3. make sure your python3 is in /usr/bin/python3, or make
+       a symbolic link there to point to it.
+
+
+    4. set the PATH variable to include the directory,
+       in here, it's $HOME/coreutils
+
+        $ vi ~/.bashrc
+        PATH=$HOME/coreutils:$PATH
+
+
+    5. update the PATH variable and that's it.
+
+        $ source ~/.bashrc

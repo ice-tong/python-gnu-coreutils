@@ -1,0 +1,135 @@
+#!/usr/bin/python3
+# Author: Joshua Chen
+# Date: 2015-02-02
+# Finished on: 2015-03-19
+# Location: Shenzhen
+# Description: mimic the head tool
+
+import os, sys
+
+prog_path = os.path.realpath(__file__)
+prog_dir  = os.path.dirname(prog_path)
+sys.path.insert(0, os.path.join(prog_dir, 'lib'))
+
+from textproc.buffer import FifoBuffer
+from system.fileutils import read_data, write_out
+from numberutils import convertHumanNumber
+
+
+def head(src, dst, args):
+    bs = args.buffer_size
+    # ignore the trailing N lines/bytes
+    if args.ignore:
+        number = args.number
+        creator = list if args.line_mode else bytearray
+        buffer = FifoBuffer(number, creator)
+        while True:
+            data = read_data(src, args.line_mode, bs)
+            if not data: break
+            data = buffer.filter(data)
+            write_out(dst, data, args.line_mode)
+    # print the first N lines/bytes
+    else:
+        number = args.number
+        while number:
+            data = read_data(src, args.line_mode, bs)
+            if not data: break
+            if number < len(data):
+                data = data[:number]
+            write_out(dst, data, args.line_mode)
+            dst.flush()
+            number -= len(data)
+
+def parse_args():
+    from argparse import ArgumentParser, Action, RawDescriptionHelpFormatter
+
+    class Mix(Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            if option_string == '-n':
+                namespace.line_mode = True
+            elif option_string == '-c':
+                namespace.line_mode = False
+            if values[0] == '-':
+                namespace.ignore = True
+            else:
+                namespace.ignore = False
+            try:
+                namespace.number = abs(int(convertHumanNumber(values)))
+            except (ValueError, KeyError):
+                print('invalid argument: %s' % values)
+                exit(1)
+
+    basename = os.path.basename(sys.argv[0])
+    usage = basename + ' [OPTION]... [FILE]...'
+    description = '\nPrint the first 10 lines of each FILE to standard output.'
+    description += '\nWith more than one FILE, precede each with a header giving the file name.'
+    description += '\nWith no FILE, or when FILE is -, read standard input.'
+    epilog = '''K may have a multiplier suffix: b 512, kB 1000, K 1024, MB 1000*1000, M 1024*1024, GB 1000*1000*1000, G 1024*1024*1024, and so on for T, P, E, Z, Y.'''
+
+    parser = ArgumentParser(
+                usage=usage,
+                description=description,
+                epilog=epilog,
+                formatter_class=RawDescriptionHelpFormatter
+            )
+    parser.add_argument('-c', '--bytes', help='''print the first K bytes of each file; with the leading `-', print all but the last K bytes of each file''', metavar='[-]K', action=Mix)
+    parser.add_argument('-n', '--lines', help='''print the first K lines instead of the first 10; with the leading `-', print all but the last K lines of each file''', metavar='[-]K', action=Mix)
+    parser.add_argument('-q', '--quiet', '--silent', dest='verbose', help='never print headers giving file names', action='store_false')
+    parser.add_argument('-v', '--verbose', dest='verbose', help='always print headers giving file names', action='store_true', default=True)
+    parser.add_argument('--version', help='output version information and exit', action='store_true')
+    parser.add_argument('FILE', help='file(s) to concatenate', nargs='*')
+    return parser.parse_args()
+
+def show_version():
+    msg='''
+head (Python implementation of GNU head of coreutils) 0.1
+Copyright (C) 2015 Joshua Chen.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Joshua Chen.
+'''
+    print(msg.strip())
+
+# argument parsing
+args = parse_args()
+if not 'line_mode' in args.__dict__:
+    args.line_mode = True   # default is line mode
+    args.number = 10        # print the first 10 lines
+if not 'ignore' in args.__dict__:
+    args.ignore = False
+
+if args.version:
+    show_version()
+    exit(0)
+
+dst = os.fdopen(sys.stdout.fileno(), 'wb')
+
+# read from stdin when no file specified
+if not args.FILE:
+    args.FILE.append('-')
+
+for file, n in zip(args.FILE, range(len(args.FILE))):
+    if file == '-':
+        src = os.fdopen(sys.stdin.fileno(), 'rb')
+    else:
+        src = open(file, 'rb')
+    if src.isatty():
+        args.buffer_size = 1 
+    else:
+        args.buffer_size = args.number
+
+    # write the header
+    if len(args.FILE) > 1 and args.verbose:
+        if n:
+            dst.write(b'\n')
+        dst.write(('==> %s <==\n' % file).encode())
+
+    try:
+        head(src, dst, args)
+    except KeyboardInterrupt:
+        print()
+        exit()
+    finally:
+        src.close()
